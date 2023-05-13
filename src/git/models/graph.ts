@@ -43,6 +43,8 @@ export interface GitGraph {
 	readonly rows: GitGraphRow[];
 	readonly id?: string;
 
+	readonly statsDeferred?: Promise<void> | undefined;
+
 	readonly paging?: {
 		readonly limit: number | undefined;
 		readonly startingCursor: string | undefined;
@@ -51,3 +53,5 @@ export interface GitGraph {
 
 	more?(limit: number, id?: string): Promise<GitGraph | undefined>;
 }
+
+export type GitGraphStats = Map<string, GitGraphRowStats>;

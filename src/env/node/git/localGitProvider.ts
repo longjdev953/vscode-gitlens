@@ -109,6 +109,7 @@ import {
 	createLogParserWithFiles,
 	getContributorsParser,
 	getGraphParser,
+	getGraphStatsParser,
 	getRefAndDateParser,
 	getRefParser,
 	GitLogParser,
@@ -1723,12 +1724,15 @@ export class LocalGitProvider implements GitProvider, Disposable {
 			ref?: string;
 		},
 	): Promise<GitGraph> {
-		const parser = getGraphParser(options?.include?.stats);
-		const refParser = getRefParser();
-
 		const defaultLimit = options?.limit ?? configuration.get('graph.defaultItemLimit') ?? 5000;
 		const defaultPageLimit = configuration.get('graph.pageItemLimit') ?? 1000;
 		const ordering = configuration.get('graph.commitOrdering', undefined, 'date');
+
+		const deferStats = options?.include?.stats; // && defaultLimit > 1000;
+
+		const parser = getGraphParser(options?.include?.stats && !deferStats);
+		const refParser = getRefParser();
+		const statsParser = getGraphStatsParser();
 
 		const [refResult, stashResult, branchesResult, remotesResult, currentUserResult] = await Promise.allSettled([
 			this.git.log2(repoPath, undefined, ...refParser.arguments, '-n1', options?.ref ?? 'HEAD'),
@@ -1776,6 +1780,8 @@ export class LocalGitProvider implements GitProvider, Disposable {
 			sha?: string,
 			cursor?: { sha: string; skip: number },
 		): Promise<GitGraph> {
+			const startTotal = total;
+
 			iterations++;
 
 			let log: string | string[] | undefined;
@@ -1849,6 +1855,7 @@ export class LocalGitProvider implements GitProvider, Disposable {
 			} while (true);
 
 			const rows: GitGraphRow[] = [];
+			const rowIndexMap = new Map<string, number>();
 
 			let avatarUri: Uri | undefined;
 			let avatarUrl: string | undefined;
@@ -2154,6 +2161,7 @@ export class LocalGitProvider implements GitProvider, Disposable {
 					contexts: contexts,
 					stats: commit.stats,
 				});
+				rowIndexMap.set(commit.sha, rows.length - 1);
 			}
 
 			const startingCursor = cursor?.sha;
@@ -2166,6 +2174,34 @@ export class LocalGitProvider implements GitProvider, Disposable {
 					  }
 					: undefined;
 
+			let statsDefered: Promise<void> | undefined;
+			if (deferStats) {
+				// eslint-disable-next-line no-async-promise-executor
+				statsDefered = new Promise<void>(async resolve => {
+					const args = [...statsParser.arguments];
+					if (startTotal === 0) {
+						args.push(`-n${total}`);
+					} else {
+						args.push(`-n${total - startTotal}`, `--skip=${startTotal}`);
+					}
+					args.push(`--${ordering}-order`, '--all');
+
+					const statsData = await this.git.log2(repoPath, stdin ? { stdin: stdin } : undefined, ...args);
+					if (statsData) {
+						const stats = statsParser.parse(statsData);
+						for (const stat of stats) {
+							const index = rowIndexMap.get(stat.sha);
+							if (index == null) continue;
+
+							const row = rows[index];
+							row.stats = stat.stats;
+						}
+					}
+
+					resolve();
+				});
+			}
+
 			return {
 				repoPath: repoPath,
 				avatars: avatars,
@@ -2177,6 +2213,7 @@ export class LocalGitProvider implements GitProvider, Disposable {
 				downstreams: downstreamMap,
 				rows: rows,
 				id: sha,
+				statsDeferred: statsDefered,
 
 				paging: {
 					limit: limit === 0 ? count : limit,

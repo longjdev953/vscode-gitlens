@@ -1942,6 +1942,8 @@ export class GraphWebviewProvider implements WebviewProvider<State> {
 		if (graph == null) {
 			this.resetRefsMetadata();
 			this.resetSearchState();
+		} else {
+			void graph.statsDeferred?.then(() => void this.notifyDidChangeRows(false));
 		}
 	}
 
